@@ -1,0 +1,297 @@
+---
+output:
+  pdf_document: 
+    latex_engine: xelatex
+    includes:
+      in_header: header.tex.txt
+    extra_dependencies: 
+      - float
+      - contour
+header-includes:
+ - \usepackage{xcolor}
+ - \definecolor{MizzouGold}{RGB}{241, 184, 45}
+ - \setmainfont{NCAA_Missouri_Tigers.otf}
+ - \usepackage{graphicx}   
+ - \usepackage{float}      
+ - \usepackage{wrapfig}    
+ - \usepackage[margin=1in]{geometry}
+ - \usepackage{array}
+ - \usepackage{booktabs}
+ - \usepackage{colortbl}
+ - \usepackage{xcolor}
+fontsize: 10pt
+params:
+  file_location: "C:/Users/ellas/OneDrive/Desktop/MonthlyData/allseptswings.csv"
+  player: "Danny Ramirez"
+---
+
+```{r setup, echo=FALSE, include=FALSE}
+library(ggplot2)
+library(kableExtra)
+library(dplyr)
+library(extrafont)
+library(tidyr)
+library(ggpubr)
+library(tinytex)
+# Load the data
+blast <- read.csv(params$file_location)
+blast <- blast|>
+  filter(player_name == params$player)%>%
+  arrange(created_at)
+```
+
+# Blast Report for `r params$player`
+
+```{r averages-table, echo=FALSE}
+# Ensure columns exist; if not, create them with NA values
+if (!"swing_speed" %in% colnames(blast)) blast$swing_speed <- NA
+if (!"rotational_acceleration" %in% colnames(blast)) blast$rotational_acceleration <- NA
+if (!"planar_efficiency" %in% colnames(blast)) blast$planar_efficiency <- NA
+if (!"bat_path_angle" %in% colnames(blast)) blast$bat_path_angle <- NA
+if (!"connection_score" %in% colnames(blast)) blast$connection_score <- NA
+
+# Calculate quality swings based on "good" ranges
+blast$bat_speed_quality <- blast$swing_speed >= 68 & blast$swing_speed <78
+blast$rotational_acceleration_quality <- blast$rotational_acceleration >= 17
+blast$planar_efficiency_quality <- blast$planar_efficiency >= 73
+blast$attack_angle_quality <- blast$bat_path_angle >= 5 & blast$bat_path_angle <= 15
+blast$connection_quality <- blast$connection_score >= 71 & blast$connection_score <= 89
+
+# Calculate the overall quality swing percentage
+blast$quality_swing <- rowSums(blast[, c("bat_speed_quality", "rotational_acceleration_quality", 
+                                         "planar_efficiency_quality", "attack_angle_quality", 
+                                         "connection_quality")], na.rm = TRUE) == 5
+quality_swing_percentage <- round(mean(blast$quality_swing, na.rm = TRUE) * 100, 2)
+
+# Calculate averages with rounding to the nearest whole number
+averages <- blast %>%
+  summarise(
+    Plane = round(mean(plane_score, na.rm = TRUE)),
+    Connection = round(mean(connection_score, na.rm = TRUE)),
+    Rotation = round(mean(rotation_score, na.rm = TRUE)),
+    BatSpeed = round(mean(swing_speed, na.rm = TRUE)),
+    AttackAngle = round(mean(bat_path_angle, na.rm = TRUE)),
+    QualitySwingPct = quality_swing_percentage
+  )
+
+# Display the summary table
+kable(averages, caption = "Player Metric Averages", digits = 0, format = "latex", booktabs = TRUE) %>%
+  kable_styling(
+    latex_options = c("striped", "hold_position"),
+    font_size = 7 
+  ) %>%
+  column_spec(1:6, width = "2.5cm") %>%
+  row_spec(0, bold = TRUE, background = "#FFD700")
+```
+
+```{r efficiency-angle-plot, echo=FALSE, message=FALSE, warning=FALSE, fig.width=5, fig.height=3, fig.show='hold', out.width="50%"}
+# Scatter plot of On Plane Efficiency vs. Attack Angle with MLB Averages
+efficiency_angle_plot <- ggplot(blast, aes(x = bat_path_angle, y = planar_efficiency)) +
+  geom_point(color = "blue", size = 3) +  # Plot points
+  geom_smooth(method = "lm", color = "red", se = TRUE) +  
+  geom_hline(yintercept = 70, linetype = "dashed", color = "darkgreen") +  
+  geom_vline(xintercept = 10, linetype = "dashed", color = "purple") +  
+  labs(
+    title = "On Plane Efficiency vs Attack Angle (contact)",
+    x = "Attack Angle (deg)",
+    y = "On Plane Efficiency (%)"
+  ) +
+  theme_minimal(base_size = 8)
+```
+
+```{r early-connection-impact-plot, echo=FALSE, message=FALSE, warning=FALSE, fig.width=5, fig.height=3, fig.show='hold', out.width="50%"}
+# Scatter plot of Early Connection vs. Connection at Impact with MLB Averages
+early_connection_impact_plot <- ggplot(blast, aes(x = early_connection, y = connection)) +
+  geom_point(color = "green", size = 3) +  # Plot points
+  geom_smooth(method = "lm", color = "orange", se = TRUE) +  
+  geom_hline(yintercept = 81.6, linetype = "dashed", color = "red") +  
+  geom_vline(xintercept = 95, linetype = "dashed", color = "blue") +  
+  labs(
+    title = "Early Connection vs Connection (Consistency)",
+    x = "Early Connection (deg)",
+    y = "Connection at Impact (deg)"
+  ) +
+  xlim(range(blast$early_connection)) +  
+  ylim(range(blast$connection)) + 
+  theme_minimal(base_size = 8)
+```
+
+```{r swing-speed-rotational-plot, echo=FALSE, message=FALSE, warning=FALSE, fig.width=5, fig.height=3, fig.show='hold', out.width="50%"}
+# Scatter plot of Swing Speed vs. Rotational Acceleration with MLB Averages
+swing_speed_rotational_plot <- ggplot(blast, aes(x = swing_speed, y = rotational_acceleration)) +
+  geom_point(color = "purple", size = 3) +  # Plot points
+  geom_smooth(method = "lm", color = "darkred", se = TRUE) + 
+  geom_hline(yintercept = 17.2, linetype = "dashed", color = "blue") +  
+  geom_vline(xintercept = 71.4, linetype = "dashed", color = "green") +  
+  labs(
+    title = "Swing Speed vs Rotational Acceleration",
+    x = "Swing Speed (mph)",
+    y = "Rotational Acceleration (g)"
+  ) +
+  theme_minimal(base_size = 8)
+```
+
+```{r struggling-metrics, echo=FALSE, message=FALSE, warning=FALSE, fig.width=5, fig.height=3, fig.show='hold', out.width="45%"}
+# Define the thresholds for struggling metrics as ranges (adjust as needed)
+thresholds <- list(
+  OnPlaneEffic = c(70, 100),           
+  AttackAngle = c(2, 15),              
+  EarlyConnection = c(80, 105),         
+  ConnectionAtImpact = c(80, 95),       
+  BatSpeed = c(66, 90),                 
+  RotAcceleration = c(10, 16)           
+)
+
+# Goals Column
+goals <- list(
+  OnPlaneEffic = 70,
+  AttackAngle = 9,
+  EarlyConnection = 80,
+  ConnectionAtImpact = 80,
+  RotAcceleration = 10,
+  BatSpeed = 70
+)
+
+# Identify struggling metrics for the player
+struggling_metrics <- blast %>%
+  summarise(
+    OnPlaneEffic = round(mean(planar_efficiency, na.rm = TRUE), 0),
+    AttackAngle = round(mean(bat_path_angle, na.rm = TRUE), 0),
+    EarlyConnection = round(mean(early_connection, na.rm = TRUE), 0),
+    ConnectionAtImpact = round(mean(connection, na.rm = TRUE), 0),
+    RotAcceleration = round(mean(rotational_acceleration, na.rm = TRUE), 0),
+    BatSpeed = round(mean(swing_speed, na.rm = TRUE), 0)
+  ) %>%
+  pivot_longer(everything(), names_to = "Metric", values_to = "Value") %>%
+  filter(
+    (Metric == "OnPlaneEffic" & (Value < thresholds$OnPlaneEffic[1] | Value > thresholds$OnPlaneEffic[2])) |
+    (Metric == "AttackAngle" & (Value < thresholds$AttackAngle[1] | Value > thresholds$AttackAngle[2])) |
+    (Metric == "EarlyConnection" & (Value < thresholds$EarlyConnection[1] | Value > thresholds$EarlyConnection[2])) |
+    (Metric == "ConnectionAtImpact" & (Value < thresholds$ConnectionAtImpact[1] | Value > thresholds$ConnectionAtImpact[2])) |
+    (Metric == "RotAcceleration" & (Value < thresholds$RotAcceleration[1] | Value > thresholds$RotAcceleration[2])) |
+    (Metric == "BatSpeed" & (Value < thresholds$BatSpeed[1] | Value > thresholds$BatSpeed[2]))
+  ) %>%
+  mutate(Goal = case_when(
+    Metric == "OnPlaneEffic" ~ goals$OnPlaneEffic,
+    Metric == "AttackAngle" ~ goals$AttackAngle,
+    Metric == "EarlyConnection" ~ goals$EarlyConnection,
+    Metric == "ConnectionAtImpact" ~ goals$ConnectionAtImpact,
+    Metric == "RotAcceleration" ~ goals$RotAcceleration,
+    Metric == "BatSpeed" ~ goals$BatSpeed
+  ))
+
+# Display the struggling metrics with rounded values
+if (nrow(struggling_metrics) > 0) {
+  kable(struggling_metrics, caption = paste("Metrics player is struggling with"), format = "latex", booktabs = TRUE) %>%
+    kable_styling(latex_options = c("striped", "hold_position"), font_size = 7) %>%
+    column_spec(1, width = "3cm") %>%
+    column_spec(2, width = "2.5cm") %>%
+    column_spec(3, width = "2.5cm") %>%
+    row_spec(0, bold = TRUE, background = "#FFD700")  
+} else {
+  cat("The player is not struggling with any metrics based on the current thresholds.")
+}
+```
+
+```{r bat-speed-plot, echo=FALSE, warning=FALSE, message=FALSE, fig.width=5, fig.height=3, fig.show='hold', out.width="45%"}
+if (nrow(blast) > 0) { 
+  if (!"swing_number" %in% colnames(blast)) {
+    blast$swing_number <- seq_len(nrow(blast))
+  }
+
+  bat_speed_plot <- ggplot(blast, aes(x = swing_number, y = swing_speed)) +
+    geom_rect(aes(xmin = 1, xmax = max(swing_number), ymin = 50, ymax = 70), fill = "red", alpha = 0.1) +  # Poor
+    geom_rect(aes(xmin = 1, xmax = max(swing_number), ymin = 70, ymax = 75), fill = "yellow", alpha = 0.1) +  # Average
+    geom_rect(aes(xmin = 1, xmax = max(swing_number), ymin = 75, ymax = 80), fill = "green", alpha = 0.1) +  # Good
+    geom_rect(aes(xmin = 1, xmax = max(swing_number), ymin = 85, ymax = max(blast$swing_speed, na.rm = TRUE)), fill = "lightblue", alpha = 0.1) +  # Excellent
+    geom_line(color = "black", linewidth = 1) +
+    geom_hline(yintercept = 70, linetype = "dashed", color = "red", linewidth = 1) +
+    scale_x_continuous(breaks = seq(1, max(blast$swing_number), by = 1), limits = c(1, max(blast$swing_number))) +
+    labs(title = "Linear Bat Speed", x = "Swing Number", y = "Bat Speed (mph)") +
+    theme_minimal(base_size = 14) +
+    theme(
+      panel.grid.major = element_blank(),
+      panel.grid.minor = element_blank(),
+      plot.title = element_text(hjust = 0.5)
+    )
+
+  if (nrow(blast) == 1) {
+    bat_speed_plot <- bat_speed_plot + geom_point(size = 3, color = "black")
+  }
+} else {
+  bat_speed_plot <- ggplot() + 
+    labs(title = "No Data Available for Bat Speed") +
+    theme_void()
+}
+```
+
+```{r rot-acc-plot, echo=FALSE, warning=FALSE, fig.width=5, fig.height=3, fig.show='hold', out.width="45%"}
+# Ensure data is available for plotting
+if (nrow(blast) > 0 && "rotational_acceleration" %in% colnames(blast)) {
+  if (!"swing_number" %in% colnames(blast)) {
+    blast$swing_number <- seq_len(nrow(blast))
+  }
+
+  rotational_acceleration_plot <- ggplot(blast, aes(x = swing_number, y = rotational_acceleration)) + 
+    geom_rect(aes(xmin = min(swing_number, na.rm = TRUE), xmax = max(swing_number, na.rm = TRUE), ymin = 0, ymax = 10), fill = "red", alpha = 0.1) +   
+    geom_rect(aes(xmin = min(swing_number, na.rm = TRUE), xmax = max(swing_number, na.rm = TRUE), ymin = 10, ymax = 20), fill = "yellow", alpha = 0.1) +
+    geom_rect(aes(xmin = min(swing_number, na.rm = TRUE), xmax = max(swing_number, na.rm = TRUE), ymin = 20, ymax = 30), fill = "green", alpha = 0.1) +
+    geom_rect(aes(xmin = min(swing_number, na.rm = TRUE), xmax = max(swing_number, na.rm = TRUE), ymin = 30, ymax = max(rotational_acceleration, na.rm = TRUE)), fill = "lightblue", alpha = 0.1) +
+    geom_line(color = "black", linewidth = 1) +
+    geom_hline(yintercept = 17, linetype = "dashed", color = "red", linewidth = 1) +
+    scale_x_continuous(breaks = seq(min(blast$swing_number, na.rm = TRUE), max(blast$swing_number, na.rm = TRUE), by = 1)) +
+    labs(title = "Rotational Acceleration", x = "Swing Number", y = "Rotational Acceleration (g)") +
+    theme_minimal(base_size = 14) +
+    theme(
+      panel.grid.major = element_blank(),
+      panel.grid.minor = element_blank(),
+      plot.title = element_text(hjust = 0.5)
+    )
+
+  # If there's only one swing, plot it as a point instead of a line
+  if (nrow(blast) == 1) {
+    rotational_acceleration_plot <- rotational_acceleration_plot + geom_point(size = 3, color = "black")
+  }
+} else {
+  rotational_acceleration_plot <- ggplot() + 
+    labs(title = "No Data Available for Rotational Acceleration") +
+    theme_void()
+}
+```
+
+```{r page 1, echo=FALSE, message=FALSE, warning=FALSE}
+ggarrange(efficiency_angle_plot, rotational_acceleration_plot, swing_speed_rotational_plot, bat_speed_plot, 
+          ncol = 2, nrow = 2, common.legend = TRUE, legend= 'bottom')
+```
+
+```{r page 2, echo=FALSE, message=FALSE, warning=FALSE}
+ggarrange( early_connection_impact_plot,
+          ncol = 2, nrow = 2, common.legend = TRUE, legend = 'bottom')
+```
+
+```{r summary, echo=FALSE, message=FALSE, warning=FALSE}
+# Assign swing numbers and select key metrics for the summary table, formatting created_at as a date
+swing_summary <- blast |> 
+  mutate(
+    "Swing Number" = row_number(),
+    created_at = as.POSIXct(created_at, format = "%Y-%m-%d")  # Adjust the date format to match your data
+  ) |>  
+  select(`Swing Number`, created_at, swing_speed, rotational_acceleration, bat_path_angle, connection_score, plane_score) |> 
+  rename(
+    `Bat Speed (mph)` = swing_speed,
+    `Rotational Acceleration (g)` = rotational_acceleration,
+    `Attack Angle (deg)` = bat_path_angle,
+    `Plane Score` = plane_score,
+    `Connection` = connection_score,
+    `Created At` = created_at
+  )
+
+# Display the swing summary table
+kable(swing_summary, caption = "Swing Summary", digits = 1, format = "latex", booktabs = TRUE) |>
+  kable_styling(
+    latex_options = c("striped", "hold_position"),
+    font_size = 7
+  ) |> 
+  column_spec(1:6, width = "2cm") |> 
+  row_spec(0, bold = TRUE, background = "#FFD700")
+```
