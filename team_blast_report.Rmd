@@ -1,0 +1,217 @@
+---
+output:
+  pdf_document:
+    toc: false
+    number_sections: false
+  html_document:
+    toc: false
+    theme: flatly
+params:
+  csv_path: "/Volumes/T7/Mizzou Baseball/2025/DATA/Blast/october.csv"
+  mlb_batspeed: 72
+  sec_batspeed: 70
+  mlb_rotaccel: 17
+  sec_rotaccel: 14
+---
+
+```{r setup, include=FALSE}
+library(tidyverse)
+library(janitor)
+library(lubridate)
+library(cowplot)
+library(png)
+library(grid)
+
+# use external drive for temp files so knitting doesn't fill local disk
+tmpdir <- "/Volumes/T7/tmp"
+dir.create(tmpdir, showWarnings = FALSE)
+Sys.setenv(TMPDIR = tmpdir, TEMP = tmpdir, TMP = tmpdir)
+
+# read data (from YAML param) and clean
+blast <- readr::read_csv(params$csv_path, show_col_types = FALSE) |> clean_names()
+
+# brand colors
+miz_gold  <- "#F1B92D"
+miz_black <- "#000000"
+
+# benchmarks (from YAML)
+mlb_batspeed <- params$mlb_batspeed
+sec_batspeed <- params$sec_batspeed
+mlb_rotaccel <- params$mlb_rotaccel
+sec_rotaccel <- params$sec_rotaccel
+
+# summaries used by plots
+blast_summary <- blast |>
+  group_by(player_name) |>
+  summarise(
+    avg_swing_speed      = mean(swing_speed, na.rm = TRUE),
+    avg_rotational_accel = mean(rotational_acceleration, na.rm = TRUE),
+    .groups = "drop"
+  )
+
+# ----- dynamic date range from CSV -----
+# try to find a reasonable date/timestamp column and parse it
+candidate_cols <- intersect(
+  names(blast),
+  c("date","session_date","swing_date","timestamp",
+    "datetime","date_time","time","swing_timestamp")
+)
+
+get_date_vector <- function(df, cols) {
+  for (col in cols) {
+    v <- df[[col]]
+    if (inherits(v, c("Date","POSIXct","POSIXt"))) return(as.Date(v))
+    if (is.character(v)) {
+      parsed <- suppressWarnings(parse_date_time(
+        v,
+        orders = c("Ymd HMS","Ymd HM","Ymd",
+                   "mdY HMS","mdY HM","mdY",
+                   "dmy HMS","dmy HM","dmy")
+      ))
+      if (sum(!is.na(parsed)) > 0) return(as.Date(parsed))
+    }
+  }
+  NULL
+}
+
+date_vec <- get_date_vector(blast, candidate_cols)
+
+if (is.null(date_vec)) {
+  date_range_str <- format(Sys.Date(), "%m-%d-%Y")
+} else {
+  rng <- range(date_vec, na.rm = TRUE)
+  date_range_str <- sprintf("%s - %s",
+                            format(rng[1], "%m-%d-%Y"),
+                            format(rng[2], "%m-%d-%Y"))
+}
+```
+
+```{r pdf_banner, echo=FALSE, message=FALSE, warning=FALSE, fig.height=1.2, fig.width=9, eval=knitr::is_latex_output()}
+library(grid); library(png)
+
+# for PDF, use PNG/JPG files (convert SVG to PNG if needed)
+left_path  <- "/Volumes/T7/Mizzou_Team_Blast/assets/Missouri_Tigers_logo.svg.png"
+right_path <- "/Volumes/T7/Mizzou_Team_Blast/assets/Missouri_Tigers_logo.svg.png"
+
+read_logo <- function(p) {
+  if (file.exists(p)) {
+    x <- try(png::readPNG(p), silent = TRUE)
+    if (!inherits(x, "try-error")) return(rasterGrob(x, interpolate = TRUE))
+  }
+  NULL
+}
+lg <- read_logo(left_path)
+rg <- read_logo(right_path)
+
+grid.newpage()
+pushViewport(viewport(x=0.5, y=0.5, width=unit(1,"npc"), height=unit(1,"npc")))
+grid.rect(gp=gpar(fill=miz_gold, col=NA))
+
+# left logo
+if (!is.null(lg)) {
+  pushViewport(viewport(x=unit(0.06,"npc"), y=0.5, width=unit(0.12,"npc"), height=unit(0.8,"npc")))
+  grid.draw(lg); popViewport()
+}
+# right logo
+if (!is.null(rg)) {
+  pushViewport(viewport(x=unit(0.94,"npc"), y=0.5, width=unit(0.12,"npc"), height=unit(0.8,"npc")))
+  grid.draw(rg); popViewport()
+}
+
+# title (top line) and date range (bottom line)
+grid.text("Team Blast Hitting Report", x=0.5, y=0.62,
+          gp=gpar(fontface="bold", cex=1.4, col="black"))
+grid.text(date_range_str, x=0.5, y=0.38, gp=gpar(cex=0.95, col="black"))
+```
+
+```{r bat_speed, fig.height=10, fig.width=9, warning=FALSE, echo=FALSE}
+# auto size
+H <- max(8, nrow(blast_summary) * 0.35)
+knitr::opts_current$set(fig.height = H, fig.width = 9)
+
+blast_summary |>
+  mutate(performance_bs = if_else(avg_swing_speed >= sec_batspeed,
+                                  "At/Above SEC Avg", "Below SEC Avg")) |>
+  ggplot(aes(x = reorder(player_name, avg_swing_speed),
+             y = avg_swing_speed,
+             fill = performance_bs)) +
+  geom_col(width = 0.5) +
+  coord_flip(clip = "off") +
+  scale_y_continuous(expand = expansion(mult = c(0, 0.10))) +
+  scale_fill_manual(values = c("At/Above SEC Avg" = "#009E73",
+                               "Below SEC Avg"    = "#E74C3C"),
+                    name = "Performance Tier") +
+  geom_hline(yintercept = mlb_batspeed, linetype = "dashed", color = "black") +
+  geom_hline(yintercept = sec_batspeed, linetype = "dashed", color = "#1E90FF") +
+  labs(title = "Average Bat Speed by Player",
+       subtitle = "Bars = player averages; dashed lines = league averages",
+       x = "Player", y = "Avg Bat Speed (mph)") +
+  theme_minimal(base_size = 16) +
+  theme(axis.text.y = element_text(size = 12, face = "bold", lineheight = 1.35),
+        axis.ticks.y = element_blank(),
+        legend.position = "bottom",
+        legend.box = "vertical",
+        legend.title = element_text(face = "bold"))
+```
+
+```{r rot_accel, fig.height=10, fig.width=9, warning=FALSE, echo=FALSE}
+H <- max(8, nrow(blast_summary) * 0.35)
+knitr::opts_current$set(fig.height = H, fig.width = 9)
+
+blast_summary |>
+  mutate(performance_ra = if_else(avg_rotational_accel >= sec_rotaccel,
+                                  "At/Above SEC Avg", "Below SEC Avg")) |>
+  ggplot(aes(x = reorder(player_name, avg_rotational_accel),
+             y = avg_rotational_accel,
+             fill = performance_ra)) +
+  geom_col(width = 0.55) +
+  coord_flip(clip = "off") +
+  scale_y_continuous(expand = expansion(mult = c(0, 0.08))) +
+  scale_fill_manual(values = c("At/Above SEC Avg" = "#009E73",
+                               "Below SEC Avg"    = "#E74C3C"),
+                    name = "Performance Tier") +
+  geom_hline(yintercept = mlb_rotaccel, linetype = "dashed", color = "black") +
+  geom_hline(yintercept = sec_rotaccel, linetype = "dashed", color = "#1E90FF") +
+  labs(title = "Average Rotational Acceleration by Player",
+       subtitle = "Bars = player averages; dashed lines = league averages",
+       x = "Player", y = "Avg Rotational Acceleration (g)") +
+  theme_minimal(base_size = 16) +
+  theme(axis.text.y = element_text(size = 12, face = "bold", lineheight = 1.35),
+        axis.ticks.y = element_blank(),
+        legend.position = "bottom",
+        legend.box = "vertical",
+        legend.title = element_text(face = "bold"))
+```
+
+```{r summary_table, echo=FALSE, message=FALSE, warning=FALSE, results='asis'}
+# ---- Page Break (for PDF) ----
+if (knitr::is_latex_output()) {
+  cat("\\newpage\n")
+} else {
+  cat("<hr style='margin-top:50px; margin-bottom:30px;'>\n")
+}
+
+# ---- Player Summary Table ----
+library(kableExtra)
+
+blast_summary |>
+  arrange(desc(avg_swing_speed)) |>
+  mutate(
+    avg_swing_speed = round(avg_swing_speed, 1),
+    avg_rotational_accel = round(avg_rotational_accel, 1)
+  ) |>
+  rename(
+    `Player` = player_name,
+    `Avg Bat Speed (mph)` = avg_swing_speed,
+    `Avg Rot. Accel (g)` = avg_rotational_accel
+  ) |>
+  kable(
+    align = "lcc",
+    caption = "Player Averages — Bat Speed and Rotational Acceleration"
+  ) |>
+  kable_styling(
+    full_width = FALSE,
+    position = "center",
+    bootstrap_options = c("striped", "hover", "condensed", "responsive")
+  )
+```
