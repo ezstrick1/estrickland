@@ -7,7 +7,7 @@ output:
     toc: false
     theme: flatly
 params:
-  csv_path: "/Volumes/T7/Mizzou Baseball/2025/DATA/Blast/october.csv"
+  csv_path: "/Volumes/T7/Mizzou Baseball/2025/DATA/Blast/0801103025.csv"
   mlb_batspeed: 72
   sec_batspeed: 70
   mlb_rotaccel: 17
@@ -29,6 +29,11 @@ Sys.setenv(TMPDIR = tmpdir, TEMP = tmpdir, TMP = tmpdir)
 
 # read data (from YAML param) and clean
 blast <- readr::read_csv(params$csv_path, show_col_types = FALSE) |> clean_names()
+
+# if player_name is missing but player_name_clean exists, use it
+if (!"player_name" %in% names(blast) && "player_name_clean" %in% names(blast)) {
+  blast <- blast |> rename(player_name = player_name_clean)
+}
 
 # brand colors
 miz_gold  <- "#F1B92D"
@@ -124,6 +129,8 @@ grid.text("Team Blast Hitting Report", x=0.5, y=0.62,
 grid.text(date_range_str, x=0.5, y=0.38, gp=gpar(cex=0.95, col="black"))
 ```
 
+## Team Averages — Bars with Benchmarks
+
 ```{r bat_speed, fig.height=10, fig.width=9, warning=FALSE, echo=FALSE}
 # auto size
 H <- max(8, nrow(blast_summary) * 0.35)
@@ -183,6 +190,230 @@ blast_summary |>
         legend.title = element_text(face = "bold"))
 ```
 
+```{r top_movers, echo=FALSE, message=FALSE, warning=FALSE, fig.width=9, fig.height=10}
+# --- Force .date from created_at (MM/DD/YY HH:MM) ---
+suppressPackageStartupMessages(library(lubridate))
+
+if ("created_at" %in% names(blast)) {
+  # Handles: 10/15/25 22:58  |  10/15/2025 22:58:04  |  10/15/25
+  dt <- suppressWarnings(parse_date_time(
+    blast$created_at,
+    orders = c("mdy HM", "mdy HMS", "mdy"),   # <- supports 2-digit year
+    tz = "America/Chicago"
+  ))
+  blast$.date <- as.Date(with_tz(dt, "America/Chicago"))
+} else {
+  stop("No created_at column found; can't build .date")
+}
+
+
+# Build a .date column (self-contained)
+add_date_col <- function(df) {
+  cand <- intersect(names(df), c("date","session_date","swing_date","timestamp","datetime","date_time","time","swing_timestamp","created_at","pull_datetime"))
+  if (length(cand) == 0) return(rep(NA_Date_, nrow(df)))
+  for (col in cand) {
+    v <- df[[col]]
+    d <- if (inherits(v, c("Date","POSIXct","POSIXt"))) {
+      as.Date(v)
+    } else if (is.numeric(v)) {
+      as.Date(as.POSIXct(v, origin = "1970-01-01", tz = "UTC"))
+    } else if (is.character(v)) {
+      suppressWarnings(as.Date(lubridate::parse_date_time(
+        v, orders = c("Ymd HMS","Ymd HM","Ymd","mdY HMS","mdY HM","mdY","dmy HMS","dmy HM","dmy")
+      )))
+    } else rep(NA_Date_, length(v))
+    if (sum(!is.na(d)) > 0) return(d)
+  }
+  rep(NA_Date_, nrow(df))
+}
+if (!".date" %in% names(blast)) blast$.date <- add_date_col(blast)
+
+if (sum(!is.na(blast$.date)) > 0 && dplyr::n_distinct(blast$.date) >= 14) {
+  endd   <- max(blast$.date, na.rm = TRUE)
+  startd <- endd - lubridate::days(13)
+  last7  <- endd - lubridate::days(6)
+
+  wk_m <- blast |>
+    dplyr::filter(.date >= startd, .date <= endd) |>
+    dplyr::mutate(window = dplyr::if_else(.date >= last7, "Last 7d", "Prior 7d")) |>
+    dplyr::group_by(player_name, window) |>
+    dplyr::summarise(bs = mean(swing_speed, na.rm = TRUE), .groups = "drop") |>
+    tidyr::pivot_wider(names_from = window, values_from = bs)
+
+  movers <- wk_m |>
+    dplyr::transmute(player_name, delta_bs = round(`Last 7d` - `Prior 7d`, 1)) |>
+    dplyr::filter(!is.na(delta_bs))
+
+  top_up   <- dplyr::slice_max(movers, delta_bs, n = 5, with_ties = FALSE)
+  top_down <- dplyr::slice_min(movers, delta_bs, n = 5, with_ties = FALSE)
+
+  p_up <- ggplot(top_up, aes(x = reorder(player_name, delta_bs), y = delta_bs, fill = delta_bs >= 0)) +
+    geom_col(width = 0.6) +
+    geom_text(aes(label = sprintf("%+.1f", delta_bs)), hjust = -0.15, size = 5) +
+    coord_flip() +
+    scale_fill_manual(values = c(`TRUE` = "#2ECC71", `FALSE` = "#E74C3C"), guide = "none") +
+    labs(title = "Top 5 Trending Up — Bat Speed (Last 7d vs Prior 7d)", x = NULL, y = "Change (mph)") +
+    scale_y_continuous(expand = expansion(mult = c(0, 0.15))) +
+    theme_minimal(base_size = 16)
+
+  p_dn <- ggplot(top_down, aes(x = reorder(player_name, -delta_bs), y = delta_bs, fill = delta_bs >= 0)) +
+    geom_col(width = 0.6) +
+    geom_text(aes(label = sprintf("%+.1f", delta_bs)), hjust = 1.15, size = 5) +
+    coord_flip() +
+    scale_fill_manual(values = c(`TRUE` = "#2ECC71", `FALSE` = "#E74C3C"), guide = "none") +
+    labs(title = "Top 5 Trending Down — Bat Speed (Last 7d vs Prior 7d)", x = NULL, y = "Change (mph)") +
+    theme_minimal(base_size = 16)
+
+  cowplot::plot_grid(p_up, p_dn, ncol = 1, rel_heights = c(1, 1))
+} else {
+  ggplot() + theme_void() + ggtitle("Top Movers: need ≥14 distinct dates (or no date column detected)")
+}
+```
+
+```{r stability_tiles, echo=FALSE, message=FALSE, warning=FALSE}
+blast_ok <- blast
+if ("player_name" %in% names(blast)) {
+  player_n <- blast |> dplyr::count(player_name, name = "swings")
+  blast_ok <- blast |> dplyr::inner_join(player_n, by = "player_name") |> dplyr::filter(swings >= 20)
+}
+
+stab <- blast_ok |>
+  dplyr::group_by(player_name) |>
+  dplyr::summarise(
+    bs_mean = mean(swing_speed, na.rm = TRUE),
+    bs_sd   = sd(swing_speed, na.rm = TRUE),
+    ra_mean = mean(rotational_acceleration, na.rm = TRUE),
+    ra_sd   = sd(rotational_acceleration, na.rm = TRUE),
+    .groups = "drop"
+  ) |>
+  dplyr::mutate(
+    cv_bs = dplyr::if_else(bs_mean > 0, 100 * bs_sd / bs_mean, NA_real_),
+    cv_ra = dplyr::if_else(ra_mean > 0, 100 * ra_sd / ra_mean, NA_real_)
+  ) |>
+  dplyr::select(player_name, cv_bs, cv_ra) |>
+  tidyr::pivot_longer(-player_name, names_to = "metric", values_to = "cv") |>
+  dplyr::mutate(metric = dplyr::recode(metric, cv_bs = "Bat Speed", cv_ra = "Rot Accel"),
+                band = dplyr::case_when(
+                  is.na(cv) ~ "No data",
+                  cv < 5    ~ "Stable",
+                  cv < 10   ~ "Some variation",
+                  TRUE      ~ "High variation"
+                ),
+                band = factor(band, levels = c("Stable","Some variation","High variation","No data")))
+
+H <- max(6, dplyr::n_distinct(stab$player_name) * 0.3)
+knitr::opts_current$set(fig.height = H, fig.width = 9)
+
+ggplot(stab, aes(x = metric, y = reorder(player_name, desc(player_name)), fill = band)) +
+  geom_tile(height = 0.9, width = 0.9, color = "white") +
+  geom_text(aes(label = ifelse(is.na(cv), "", paste0(round(cv,1), "%"))), size = 4) +
+  scale_fill_manual(values = c("Stable"="#2ECC71","Some variation"="#F1C40F","High variation"="#E74C3C","No data"="#BDC3C7"), name = "Stability (CV%)") +
+  labs(title = "Swing Repeatability (Lower = Better)", x = NULL, y = NULL) +
+  theme_minimal(base_size = 16) + theme(panel.grid = element_blank())
+```
+
+```{r gap_to_sec, echo=FALSE, message=FALSE, warning=FALSE, fig.width=9, fig.height=10}
+sec_batspeed  <- params$sec_batspeed
+sec_rotaccel  <- params$sec_rotaccel
+
+summ_all <- blast |>
+  dplyr::group_by(player_name) |>
+  dplyr::summarise(
+    bs = mean(swing_speed, na.rm = TRUE),
+    ra = mean(rotational_acceleration, na.rm = TRUE),
+    .groups = "drop"
+  )
+
+gap <- summ_all |>
+  dplyr::transmute(player_name, gap_bs = bs - sec_batspeed, gap_ra = ra - sec_rotaccel)
+
+plot_gap <- function(df, gap_col, title, ylab) {
+  df2 <- df |>
+    dplyr::select(player_name, gap = {{gap_col}}) |>
+    dplyr::filter(!is.na(gap), gap < 0) |>
+    dplyr::mutate(need = abs(gap)) |>
+    dplyr::slice_max(need, n = 10, with_ties = FALSE)
+  if (nrow(df2) == 0) {
+    ggplot() + theme_void() + ggtitle(paste0(title, " — Everyone ≥ SEC ✅"))
+  } else {
+    ggplot(df2, aes(x = reorder(player_name, need), y = need)) +
+      geom_col(fill = "#E74C3C", width = 0.6) +
+      geom_text(aes(label = paste0("-", round(need, 1))), hjust = -0.15, size = 5) +
+      coord_flip() +
+      scale_y_continuous(expand = expansion(mult = c(0, 0.15))) +
+      labs(title = title, x = NULL, y = ylab) +
+      theme_minimal(base_size = 16)
+  }
+}
+
+p1 <- plot_gap(gap, gap_bs, "Gap to SEC — Bat Speed (who needs the most)", "mph needed to reach SEC")
+p2 <- plot_gap(gap, gap_ra, "Gap to SEC — Rot Accel (who needs the most)", "g needed to reach SEC")
+
+cowplot::plot_grid(p1, p2, ncol = 1, rel_heights = c(1, 1))
+```
+
+```{r swing_volume, echo=FALSE, message=FALSE, warning=FALSE}
+min_sw <- 20; target_sw <- 50
+player_n <- blast |> dplyr::count(player_name, name = "swings")
+blast_ok <- blast |> dplyr::inner_join(player_n, by = "player_name") |> dplyr::filter(swings >= min_sw)
+if (nrow(blast_ok) == 0) blast_ok <- blast
+
+sw <- blast_ok |>
+  dplyr::count(player_name, name = "swings") |>
+  dplyr::arrange(dplyr::desc(swings))
+
+H <- max(7, nrow(sw) * 0.35)
+knitr::opts_current$set(fig.height = H, fig.width = 9)
+
+ggplot(sw, aes(x = reorder(player_name, swings), y = swings, fill = swings >= target_sw)) +
+  geom_col(width = 0.6) +
+  geom_hline(yintercept = target_sw, linetype = "dashed", color = "black", linewidth = 0.8) +
+  geom_text(aes(label = swings), hjust = -0.15, size = 5) +
+  coord_flip() +
+  scale_fill_manual(values = c(`TRUE` = "#2ECC71", `FALSE` = "#E74C3C"), guide = "none") +
+  scale_y_continuous(expand = expansion(mult = c(0, 0.15))) +
+  labs(title = paste0("Swing Volume (Target = ", target_sw, ")"), x = NULL, y = "Swings counted") +
+  theme_minimal(base_size = 16)
+```
+
+```{r week_vs_s2d, echo=FALSE, message=FALSE, warning=FALSE}
+if (!".date" %in% names(blast)) blast$.date <- add_date_col(blast)
+if (sum(!is.na(blast$.date)) > 0) {
+  end_date   <- max(blast$.date, na.rm = TRUE)
+  start_date <- end_date - lubridate::days(6)
+  wk_vs <- blast |>
+    dplyr::mutate(in_week = !is.na(.date) & .date >= start_date & .date <= end_date) |>
+    dplyr::group_by(player_name) |>
+    dplyr::summarise(
+      bs_wk  = mean(dplyr::if_else(in_week, swing_speed, NA_real_), na.rm = TRUE),
+      bs_s2d = mean(swing_speed, na.rm = TRUE),
+      swings = dplyr::n(),
+      .groups = "drop"
+    ) |>
+    dplyr::filter(!is.na(bs_wk), !is.na(bs_s2d))
+
+  if (nrow(wk_vs) > 0) {
+    H <- max(7, nrow(wk_vs) * 0.35)
+    knitr::opts_current$set(fig.height = H, fig.width = 9)
+
+    ggplot(wk_vs, aes(x = reorder(player_name, bs_wk))) +
+      geom_col(aes(y = bs_s2d, fill = "Season-to-Date"), width = 0.6, alpha = 0.5) +
+geom_col(aes(y = bs_wk,  fill = "This Week"), width = 0.4) +
+scale_fill_manual(
+  name = "Metric",
+  values = c("This Week" = "#2ECC71", "Career Avg" = "gray70"),
+  guide = guide_legend(reverse = TRUE)
+) +
+      geom_hline(yintercept = params$sec_batspeed, linetype = "dashed", color = "#1E90FF") +
+      coord_flip() +
+      labs(title = "Bat Speed — This Week vs Season-to-Date", x = NULL, y = "mph") +
+      theme_minimal(base_size = 16)
+  } else { ggplot() + theme_void() + ggtitle("Week vs S2D: no weekly data available.") }
+} else {
+  ggplot() + theme_void() + ggtitle("Week vs S2D: no date column detected.")
+}
+```
+
 ```{r summary_table, echo=FALSE, message=FALSE, warning=FALSE, results='asis'}
 # ---- Page Break (for PDF) ----
 if (knitr::is_latex_output()) {
@@ -191,23 +422,23 @@ if (knitr::is_latex_output()) {
   cat("<hr style='margin-top:50px; margin-bottom:30px;'>\n")
 }
 
-# ---- Player Summary Table ----
+# ---- Player Summary with Swing Count ----
 library(kableExtra)
 
-blast_summary |>
-  arrange(desc(avg_swing_speed)) |>
-  mutate(
-    avg_swing_speed = round(avg_swing_speed, 1),
-    avg_rotational_accel = round(avg_rotational_accel, 1)
+blast_summary_table <- blast |>
+  group_by(player_name) |>
+  summarise(
+    Swing_Count          = n(),
+    Avg_Bat_Speed_mph    = round(mean(swing_speed, na.rm = TRUE), 1),
+    Avg_Rot_Accel_g      = round(mean(rotational_acceleration, na.rm = TRUE), 1),
+    .groups = "drop"
   ) |>
-  rename(
-    `Player` = player_name,
-    `Avg Bat Speed (mph)` = avg_swing_speed,
-    `Avg Rot. Accel (g)` = avg_rotational_accel
-  ) |>
+  arrange(desc(Avg_Bat_Speed_mph))
+
+blast_summary_table |>
   kable(
-    align = "lcc",
-    caption = "Player Averages — Bat Speed and Rotational Acceleration"
+    align = "lccc",
+    caption = "Player Averages — Swing Count, Bat Speed, and Rotational Acceleration"
   ) |>
   kable_styling(
     full_width = FALSE,
