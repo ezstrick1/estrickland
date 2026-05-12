@@ -1,0 +1,121 @@
+---
+title: "NFL Attendance Analysis"
+subtitle: "Do Wins Drive Fans to the Stadium?"
+author: "Ella Strickland"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+library(dplyr)
+library(tidyverse)
+library(ggplot2)
+library(scales)
+
+attendance <- read_csv("~/Desktop/R Proj/data/NFL/attendance.csv")
+games <- read_csv("~/Desktop/R Proj/data/NFL/games.csv")
+standings <- read_csv("~/Desktop/R Proj/data/NFL/standings.csv")
+
+left_join(attendance, standings, by = c("team", "year"))
+
+joined <- left_join(attendance, standings, by = c("team", "year"))
+
+#---rename and delete col names
+joined <- joined %>%
+  select(-team_name.y)%>%
+  rename(team_name = team_name.x)
+
+#one team per season per row
+
+season <- joined %>%
+  group_by(team_name, year)%>%
+  summarise(wins = max(wins),
+            home = max(home),
+            playoffs = max(playoffs),
+            .groups = "drop")
+
+
+```
+
+## Introduction
+Football is the most watched sport in the United States (Split between NFL and College). Obviously, the majority of fans watch via television, but NFL teams make a good amount of money from their in-person viewers purchasing tickets. To what extent does a team's win percentage vs market size affect home game attendance? To answer this question we are going to look at data from the years 2000-2019.
+
+## Data
+This analysis uses three different datasets covering all 32 NFL franchises from 2000-2019. The attendance table has weekly and season-level attendance numbers for each team. The standings table has win/loss records, points, and playoff status for each season. The games table contains individual game results including scores, yards, and turnovers.
+
+## Analysis
+
+### Wins vs. Home Attendance
+Our first data point we are going to look at is the correlation between how many wins a team has versus the amount of fans that attended home games. We also will add a line of best fit to help gauge the trend for attendance the higher the win total goes.
+
+```{r win-vs-attend, message= FALSE, echo=FALSE}
+ggplot(season, aes(x=wins, y=home, color = playoffs)) +
+  geom_point()+
+  scale_y_continuous(labels = label_comma())+
+  geom_smooth()+
+  labs(title="NFL Home Attendance vs Wins (2000-2019)", y = "Total Home Attendance", x = "Total Team Wins"  )
+```
+
+This chart shows that wins and home attendance have a positive relationship, but only up to a point. Once a team reaches the 10+ win range, attendance plateaus regardless of how many more games they win. More notably, playoff teams consistently draw more fans than non-playoff teams at nearly every win total, suggesting that postseason eligibility matters more to fans than raw win count. For sports business teams, this implies that the biggest attendance gains come from going from a losing team to a playoff contender, not from winning 12 games instead of 10.
+
+### Franchise Loyalty
+Wins tell part of the story, but some fanbases show up regardless of what's happening on the field. This chart ranks all 32 franchises by average home attendance across the full 20-season window, giving us a clearer picture of which markets have the most dedicated fans.
+```{r fan-loyalty, message=FALSE, echo=FALSE}
+loyalty <- joined %>%
+  group_by(team_name)%>%
+  summarise(avg_home = mean(home),
+            .groups = "drop")
+
+nfl_colors <- c(
+  "49ers"      = "#AA0000",
+  "Bears"      = "#00143F",
+  "Bengals"    = "#FB4F14",
+  "Bills"      = "#00338D",
+  "Broncos"    = "#002244",
+  "Browns"     = "#311D00",
+  "Buccaneers" = "#D50A0A",
+  "Cardinals"  = "#97233F",
+  "Chargers"   = "#0080C6",
+  "Chiefs"     = "#E31837",
+  "Colts"      = "#003D79",
+  "Cowboys"    = "#003594",
+  "Dolphins"   = "#008E97",
+  "Eagles"     = "#004C54",
+  "Falcons"    = "#A71930",
+  "Giants"     = "#0B2265",
+  "Jaguars"    = "#101820",
+  "Jets"       = "#004D25",
+  "Lions"      = "#0076B6",
+  "Packers"    = "#203731",
+  "Panthers"   = "#0085CA",
+  "Patriots"   = "#002244",
+  "Raiders"    = "#000000",
+  "Rams"       = "#003594",
+  "Ravens"     = "#241773",
+  "Redskins"   = "#773141",
+  "Saints"     = "#D3BC8D",
+  "Seahawks"   = "#002244",
+  "Steelers"   = "#FFB612",
+  "Texans"     = "#03202F",
+  "Titans"     = "#0C2340",
+  "Vikings"    = "#4F2683"
+)
+
+ggplot(loyalty, aes(x = reorder(team_name, avg_home), y = avg_home,fill = team_name )) +
+  geom_col()+
+  coord_flip()+
+  scale_fill_manual(values = nfl_colors)+
+  scale_y_continuous(labels = label_comma())+
+  theme(legend.position = "none")+
+  labs(title = "Team Fan Loyalty", 
+       x = "Team Name", 
+       y = "Average Home Attendance")
+```
+
+The top five franchises by average home attendance are Washington, the Giants, the Jets, the Cowboys, and the Broncos. These are largely large-market teams with older, high-capacity stadiums, suggesting that market size and venue capacity play a significant role in raw attendance numbers independent of team performance.
+
+
+### Conclusion
+
+Winning matters, but it is not the whole story. NFL home attendance rises with wins up to a point, but plateaus once teams reach playoff-contention range. The more meaningful driver is postseason eligibility, playoff teams consistently out-draw non-playoff teams regardless of exact win total. Meanwhile, market size and stadium capacity set a ceiling that performance alone cannot overcome, as seen in the dominance of large-market franchises like Washington, the Giants, and the Cowboys at the top of the loyalty rankings. For sports business teams, this suggests that the most impactful attendance gains come not from marginal improvement, but from the leap into playoff contention.
